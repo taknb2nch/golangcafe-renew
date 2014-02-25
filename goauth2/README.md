@@ -28,7 +28,3 @@ var (
 ```
 $ go run getcalendarlist.go
 ```  
-
-##License
-[MIT License](LICENSE)
-=======
