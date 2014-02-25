@@ -10,7 +10,7 @@ $ go get code.google.com/p/google-api-go-client/calendar/v3
 ```  
 calendar API を使用したいだけなのになぜかすべてインストールされてしまいます。
   
-ソースコード中の33行目付近の clientId と clientSecret を設定してください。　 
+ソースコード中の33行目付近の clientId と clientSecret を設定してください。（任意）   
 未設定時は実行に入力を求められるのでcopy&pasteしてください。  
 ```
 var (
@@ -31,3 +31,4 @@ $ go run getcalendarlist.go
 
 ##License
 [MIT License](LICENSE)
+=======
