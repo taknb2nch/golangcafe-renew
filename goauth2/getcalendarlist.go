@@ -1,6 +1,7 @@
 // 事前に以下の事をしておくこと。
 // go getコマンドでパッケージを取得しておくこと。
 // go get code.google.com/p/goauth2/oauth
+// go get code.google.com/p/google-api-go-client/calendar/v3
 //
 // Cloud ConsoleのCredentialsでClient IDを作成しておく。
 // Cloud ConsoleのAPIsでAPIをONにしておくこと。
@@ -9,7 +10,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"code.google.com/p/goauth2/oauth"
+	"code.google.com/p/google-api-go-client/calendar/v3"
 )
 
 var (
@@ -46,6 +47,9 @@ func main() {
 
 	// 認証コードを引数で受け取る。
 	code := flag.Arg(0)
+
+	//
+	checkClientIDandSecret()
 
 	config := &oauth.Config{
 		ClientId:     clientId,
@@ -80,25 +84,29 @@ func main() {
 		}
 	}
 
-	// config.TokenCache.Token()かtransport.Exchange(code)の戻り値で取得したTokenを設定する
-	// ようだが、無くても動作はしているようにみえる…。高速化？
-	//    transport.Token = token
+	//
+	var svc *calendar.Service
+	var cl *calendar.CalendarList
 
-	// Calendar APIにアクセス
-	r, err := transport.Client().Get(request_url)
+	svc, err = calendar.New(transport.Client())
+
 	if err != nil {
-		fmt.Println("Get: ", err)
-		return
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
 	}
 
-	defer r.Body.Close()
+	cl, err = svc.CalendarList.List().Do()
 
-	// Write the response to standard output.
-	io.Copy(os.Stdout, r.Body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
 
-	// Send final carriage return, just to be neat.
-	fmt.Println()
+	fmt.Printf("--- Your calendars ---\n")
 
+	for _, item := range cl.Items {
+		fmt.Printf("%v, %v\n", item.Summary, item.Description)
+	}
 }
 
 func getAuthCode(config *oauth.Config) (string, error) {
@@ -186,4 +194,20 @@ func getAuthCode(config *oauth.Config) (string, error) {
 type RedirectResult struct {
 	Code string
 	Err  error
+}
+
+func checkClientIDandSecret() {
+	if _, err := os.Stat(cachefile); err == nil {
+		return
+	}
+
+	if clientId == "" {
+		fmt.Println("Input ClientID")
+		fmt.Scanf("%s\n", &clientId)
+	}
+
+	if clientSecret == "" {
+		fmt.Println("Input ClientSecret")
+		fmt.Scanf("%s\n", &clientSecret)
+	}
 }
