@@ -171,7 +171,7 @@ func getAuthCode(config *oauth.Config) (string, error) {
 	select {
 	case rr = <-redirectResult:
 	case <-tch:
-		return "", fmt.Errorf("Timeout for waiting redirect.")
+		return "", fmt.Errorf("Timeout: waiting redirect.")
 	}
 
 	if rr.Err != nil {
