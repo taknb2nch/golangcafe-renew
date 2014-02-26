@@ -175,8 +175,8 @@ func getAuthCode(config *oauth.Config, port int) (string, error) {
 
 	<-serverStarted
 
-	// set redirect timeout 20sec
-	tch := time.After(20 * time.Second)
+	// set redirect timeout 30sec
+	tch := time.After(30 * time.Second)
 
 	fmt.Println("Start your browser after 2sec.")
 
