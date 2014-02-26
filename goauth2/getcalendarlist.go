@@ -35,19 +35,22 @@ var (
 	clientSecret = ""
 	//
 	redirectURL = "http://localhost"
+	//
 )
 
 func main() {
 	runtime.GOMAXPROCS(2)
 
 	var err error
-	var port int
+	var lsConfig LocalServerConfig
 
-	flag.IntVar(&port, "p", 16061, "local port")
+	flag.IntVar(&lsConfig.Port, "p", 16061, "local port: 1024 < ")
+	flag.IntVar(&lsConfig.Timeout, "t", 30, "redirect timeout: 0 - 90")
 
 	flag.Parse()
 
-	if port <= 1024 {
+	if lsConfig.Port <= 1024 ||
+		lsConfig.Timeout < 0 || lsConfig.Timeout > 90 {
 		fmt.Fprintf(os.Stderr, "Usage: \n")
 		flag.PrintDefaults()
 		os.Exit(2)
@@ -64,7 +67,7 @@ func main() {
 	config := &oauth.Config{
 		ClientId:     clientId,
 		ClientSecret: clientSecret,
-		RedirectURL:  fmt.Sprintf("%s:%d", redirectURL, port),
+		RedirectURL:  fmt.Sprintf("%s:%d", redirectURL, lsConfig.Port),
 		Scope:        scope,
 		AuthURL:      request_token_url,
 		TokenURL:     auth_token_url,
@@ -78,7 +81,7 @@ func main() {
 	if err != nil {
 		// キャッシュなし
 		if code == "" {
-			code, err = getAuthCode(config, port)
+			code, err = getAuthCode(config, lsConfig)
 
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -119,7 +122,7 @@ func main() {
 	}
 }
 
-func getAuthCode(config *oauth.Config, port int) (string, error) {
+func getAuthCode(config *oauth.Config, lsConfig LocalServerConfig) (string, error) {
 	url := config.AuthCodeURL("")
 
 	var cmd *exec.Cmd
@@ -171,12 +174,12 @@ func getAuthCode(config *oauth.Config, port int) (string, error) {
 		if err != nil {
 			rr <- RedirectResult{Err: err}
 		}
-	}(redirectResult, serverStarted, port)
+	}(redirectResult, serverStarted, lsConfig.Port)
 
 	<-serverStarted
 
-	// set redirect timeout 30sec
-	tch := time.After(30 * time.Second)
+	// set redirect timeout
+	tch := time.After(time.Duration(lsConfig.Timeout) * time.Second)
 
 	fmt.Println("Start your browser after 2sec.")
 
@@ -206,6 +209,11 @@ func getAuthCode(config *oauth.Config, port int) (string, error) {
 type RedirectResult struct {
 	Code string
 	Err  error
+}
+
+type LocalServerConfig struct {
+	Port    int
+	Timeout int
 }
 
 func checkClientIDandSecret() {
