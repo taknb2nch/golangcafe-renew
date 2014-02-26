@@ -34,14 +34,24 @@ var (
 	clientId     = ""
 	clientSecret = ""
 	//
-	redirectURL = "http://localhost:16061"
+	redirectURL = "http://localhost"
 )
 
 func main() {
 	runtime.GOMAXPROCS(2)
-	flag.Parse()
 
 	var err error
+	var port int
+
+	flag.IntVar(&port, "p", 16061, "local port")
+
+	flag.Parse()
+
+	if port <= 1024 {
+		fmt.Fprintf(os.Stderr, "Usage: \n")
+		flag.PrintDefaults()
+		os.Exit(2)
+	}
 
 	fmt.Println("Start Execute API")
 
@@ -54,7 +64,7 @@ func main() {
 	config := &oauth.Config{
 		ClientId:     clientId,
 		ClientSecret: clientSecret,
-		RedirectURL:  redirectURL,
+		RedirectURL:  fmt.Sprintf("%s:%d", redirectURL, port),
 		Scope:        scope,
 		AuthURL:      request_token_url,
 		TokenURL:     auth_token_url,
@@ -68,7 +78,7 @@ func main() {
 	if err != nil {
 		// キャッシュなし
 		if code == "" {
-			code, err = getAuthCode(config)
+			code, err = getAuthCode(config, port)
 
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -109,7 +119,7 @@ func main() {
 	}
 }
 
-func getAuthCode(config *oauth.Config) (string, error) {
+func getAuthCode(config *oauth.Config, port int) (string, error) {
 	url := config.AuthCodeURL("")
 
 	var cmd *exec.Cmd
@@ -130,7 +140,7 @@ func getAuthCode(config *oauth.Config) (string, error) {
 	redirectResult := make(chan RedirectResult, 1)
 	serverStarted := make(chan bool, 1)
 	//
-	go func(rr chan<- RedirectResult, ss chan<- bool) {
+	go func(rr chan<- RedirectResult, ss chan<- bool, p int) {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			code := r.URL.Query().Get("code")
 
@@ -151,15 +161,17 @@ func getAuthCode(config *oauth.Config) (string, error) {
 			rr <- RedirectResult{Code: code}
 		})
 
-		fmt.Printf("Start Listen: localhost:16061\n")
+		host := fmt.Sprintf("localhost:%d", p)
+
+		fmt.Printf("Start Listen: %s\n", host)
 		ss <- true
 
-		err := http.ListenAndServe(":16061", nil)
+		err := http.ListenAndServe(host, nil)
 
 		if err != nil {
 			rr <- RedirectResult{Err: err}
 		}
-	}(redirectResult, serverStarted)
+	}(redirectResult, serverStarted, port)
 
 	<-serverStarted
 
