@@ -133,7 +133,7 @@ func getAuthCode(config *oauth.Config, lsConfig LocalServerConfig) (string, erro
 		cmd = exec.Command("cmd", "/c", "start", url)
 
 	case "darwin":
-		url = strings.Replace(url, "&", `\&`, -1)
+		//url = strings.Replace(url, "&", `\&`, -1)
 		cmd = exec.Command("open", url)
 
 	default:
