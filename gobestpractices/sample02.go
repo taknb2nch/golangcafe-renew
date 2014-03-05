@@ -1,10 +1,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
+)
+
+var (
+	errDoThis = errors.New("Error of doThis.")
+	errDoThat = errors.New("Error of doThat.")
 )
 
 func init() {
@@ -14,27 +20,36 @@ func init() {
 func errorHandler(f func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         err := f(w, r)
-        if err != nil {
+        switch err {
+        case errDoThis :
+            http.Error(w, err.Error(), http.StatusForbidden)
+        case errDoThat:
+            http.Error(w, err.Error(), http.StatusNotFound)
+        case nil:
+        	fmt.Fprintf(w, "Hello World")
+        default:
             http.Error(w, err.Error(), http.StatusInternalServerError)
-            log.Printf("handling %q: %v", r.RequestURI, err)
+            
         }
+
+        log.Printf("handling %q: %v", r.RequestURI, err)
     }
 }
 
 func betterHandler(w http.ResponseWriter, r *http.Request) error {
     if err := doThis(); err != nil {
-        return fmt.Errorf("doing this: %v", err)
+        return err
     }
 
     if err := doThat(); err != nil {
-        return fmt.Errorf("doing that: %v", err)
+        return err
     }
     return nil
 }
 
 func doThis() error {
     if rand.Intn(100) > 50 {
-        return fmt.Errorf("Error of doThis.")
+        return errDoThis
     } else {
         return nil
     }
@@ -42,7 +57,7 @@ func doThis() error {
 
 func doThat() error {
     if rand.Intn(100) > 50 {
-        return fmt.Errorf("Error of doThat.")
+        return errDoThat
     } else {
         return nil
     }
