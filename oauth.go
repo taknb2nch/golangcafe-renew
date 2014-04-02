@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -11,48 +12,14 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func main() {
-	var verifyCode string
-	var oauthToken string
-	var oauthTokenSecret string
-
-	v := step1()
-	oauthToken = v.Get("oauth_token")
-	oauthTokenSecret = v.Get("oauth_token_secret")
-
-	verifyUrl := step2(oauthToken)
-
-	fmt.Println("Visit this URL to get a code, then enter below this.\n")
-	fmt.Println(verifyUrl)
-	fmt.Printf("> ")
-	fmt.Scanf("%s\n", &verifyCode)
-
-	v = step3(verifyCode, oauthToken, oauthTokenSecret)
-	oauthToken = v.Get("oauth_token")
-	oauthTokenSecret = v.Get("oauth_token_secret")
-
-	pv := make(url.Values)
-	//pv.Add("status", "Hello Ladies + Gentlemen, a signed OAuth request!")
-	pv.Add("status", "post from go program. "+time.Now().String()+" #gdgchugoku")
-	pv.Add("lat", "37.7821120598956")
-	pv.Add("long", "-122.400612831116")
-
-	step4(oauthToken, oauthTokenSecret, pv)
-}
-
 const (
-	consumerKey    = "g43py4E3BUGjXjOWhxWjg"
-	consumerSecret = "EdqZpFtdmDBnpdEtGcIOzNmUetj29FgVZ0jZQNxzk"
-
-	OAUTH_VERSION    = "1.0"
-	SIGNATURE_METHOD = "HMAC-SHA1"
-
 	CALLBACK_PARAM         = "oauth_callback"
 	CONSUMER_KEY_PARAM     = "oauth_consumer_key"
 	NONCE_PARAM            = "oauth_nonce"
@@ -64,11 +31,94 @@ const (
 	TOKEN_SECRET_PARAM     = "oauth_token_secret"
 	VERIFIER_PARAM         = "oauth_verifier"
 	VERSION_PARAM          = "oauth_version"
-
-	REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token"
-	AUTHORIZE_URL     = "https://api.twitter.com/oauth/authorize"
-	ACCESS_TOKEN_URL  = "https://api.twitter.com/oauth/access_token"
 )
+
+func main() {
+	var verifyUrl string
+	var verifyCode string
+	var err error
+
+	config := &Config{
+		ConsumerKey:     "g43py4E3BUGjXjOWhxWjg",
+		ConsumerSecret:  "EdqZpFtdmDBnpdEtGcIOzNmUetj29FgVZ0jZQNxzk",
+		RequestTokenUrl: "https://api.twitter.com/oauth/request_token",
+		AuthorizeUrl:    "https://api.twitter.com/oauth/authorize",
+		AccessTokenUrl:  "https://api.twitter.com/oauth/access_token",
+		TokenCache:      CacheFile("cache.json"),
+	}
+
+	h := HogeHoge{Config: config}
+
+	token, err := config.TokenCache.Token()
+
+	if err != nil {
+		verifyUrl, err = h.GetAuthUrl()
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		fmt.Println("Visit this URL to get a code, then enter below this.\n")
+		fmt.Println(verifyUrl)
+		fmt.Printf("> ")
+		fmt.Scanf("%s\n", &verifyCode)
+
+		token, err = h.Exchange(verifyCode)
+		if err != nil {
+			log.Fatalln(err)
+		}
+	}
+
+	h.Token = token
+
+	v := make(url.Values)
+	//v.Add("status", "Hello Ladies + Gentlemen, a signed OAuth request!")
+	v.Add("status", "post from go program. "+time.Now().String()+" #gdgchugoku")
+	v.Add("lat", "37.7821120598956")
+	v.Add("long", "-122.400612831116")
+
+	h.DoRequest("POST", "https://api.twitter.com/1.1/statuses/update.json", v)
+}
+
+type Config struct {
+	ConsumerKey     string
+	ConsumerSecret  string
+	RequestTokenUrl string
+	AuthorizeUrl    string
+	AccessTokenUrl  string
+
+	TokenCache CacheFile
+}
+
+type Token struct {
+	OAuthToken       string
+	OAuthTokenSecret string
+}
+
+type HogeHoge struct {
+	Config *Config
+	Token  *Token
+
+	tempToken       string
+	tempTokenSecret string
+}
+
+func (h *HogeHoge) GetAuthUrl() (string, error) {
+	if err := h.step1(); err != nil {
+		return "", err
+	}
+
+	return h.Config.AuthorizeUrl + "?oauth_token=" + h.tempToken, nil
+}
+
+func (h *HogeHoge) Exchange(verifyCode string) (*Token, error) {
+
+	token, err := h.step3(verifyCode)
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
 
 /*
 	・コンシューマキー ( oauth_consumer_key )
@@ -82,30 +132,36 @@ const (
 */
 // 署名キー
 // "Consumer SecretをURLエンコードした値"&"Token Secretの値"
-func step1() url.Values {
-	h := NewHoge1(
+/*
+	・oauth_token ・・・ユーザのトークン（仮）
+	・oauth_token_secret ・・・ ユーザの秘密鍵
+	・oauth_callback_confirmed ・・・ OKだった場合これが「true」になる。なお、そもそも失敗した場合、HTTPプロトコルの「401」
+*/
+func (h *HogeHoge) step1() error {
+	hh := NewHoge1(
 		"GET",
-		REQUEST_TOKEN_URL,
-		consumerKey,
-		consumerSecret,
+		h.Config.RequestTokenUrl,
+		h.Config.ConsumerKey,
+		h.Config.ConsumerSecret,
 		"",
 		"")
 
-	h.Set(CALLBACK_PARAM, "oob")
+	hh.Set(CALLBACK_PARAM, "oob")
 
-	value, _ := doRequest("GET", REQUEST_TOKEN_URL, h.GetAuthorization(), nil, nil)
+	value, err := doRequest("GET", h.Config.RequestTokenUrl, hh.GetAuthorization(), nil, nil)
+	if err != nil {
+		return err
+	}
 
-	/*
-		・oauth_token ・・・ユーザのトークン（仮）
-		・oauth_token_secret ・・・ ユーザの秘密鍵
-		・oauth_callback_confirmed ・・・ OKだった場合これが「true」になる。なお、そもそも失敗した場合、HTTPプロトコルの「401」
-	*/
-	return value
+	h.tempToken = value.Get("oauth_token")
+	h.tempTokenSecret = value.Get("oauth_token_secret")
+
+	return nil
 }
 
-func step2(oauthToken string) string {
-	return AUTHORIZE_URL + "?oauth_token=" + oauthToken
-}
+// func step2(oauthToken string) string {
+// 	return AUTHORIZE_URL + "?oauth_token=" + oauthToken
+// }
 
 /*
 	・oauth_consumer_key ・・・ コンシューマのキー
@@ -117,39 +173,51 @@ func step2(oauthToken string) string {
 	・署名のプロトコル( oauth_signature_method )
 	・署名( oauth_signature )
 */
-func step3(verifyCode, oauthToken, oauthTokenSecret string) url.Values {
-	h := NewHoge1(
+/*
+	・oauth_token ・・・ 『正式の』アクセストークン
+	・oauth_token_secret ・・・『正式の』アクセストークン秘密鍵
+*/
+func (h *HogeHoge) step3(verifyCode string) (*Token, error) {
+	hh := NewHoge1(
 		"POST",
-		ACCESS_TOKEN_URL,
-		consumerKey,
-		consumerSecret,
-		oauthToken,
-		oauthTokenSecret)
+		h.Config.AccessTokenUrl,
+		h.Config.ConsumerKey,
+		h.Config.ConsumerSecret,
+		h.tempToken,
+		h.tempTokenSecret)
 
-	h.Set(CALLBACK_PARAM, "oob")
-	h.Set(VERIFIER_PARAM, verifyCode)
+	hh.Set(CALLBACK_PARAM, "oob")
+	hh.Set(VERIFIER_PARAM, verifyCode)
 
-	value, _ := doRequest("POST", ACCESS_TOKEN_URL, h.GetAuthorization(), nil, nil)
+	value, err := doRequest("POST", h.Config.AccessTokenUrl, hh.GetAuthorization(), nil, nil)
+	if err != nil {
+		return nil, err
+	}
 
-	/*
-		・oauth_token ・・・ 『正式の』アクセストークン
-		・oauth_token_secret ・・・『正式の』アクセストークン秘密鍵
-	*/
-	return value
+	tok := &Token{
+		OAuthToken:       value.Get("oauth_token"),
+		OAuthTokenSecret: value.Get("oauth_token_secret"),
+	}
+	h.Config.TokenCache.PutToken(tok)
+
+	h.tempToken = ""
+	h.tempTokenSecret = ""
+
+	return tok, nil
 }
 
-func step4(oauthToken, oauthTokenSecret string, v url.Values) {
-	h := NewHoge1(
-		"POST",
-		"https://api.twitter.com/1.1/statuses/update.json",
-		consumerKey,
-		consumerSecret,
-		oauthToken,
-		oauthTokenSecret)
+func (h *HogeHoge) DoRequest(method, requestUrl string, v url.Values) {
+	hh := NewHoge1(
+		method,
+		requestUrl,
+		h.Config.ConsumerKey,
+		h.Config.ConsumerSecret,
+		h.Token.OAuthToken,
+		h.Token.OAuthTokenSecret)
 
-	h.SetValues(v)
+	hh.SetValues(v)
 
-	value, _ = doRequest("POST", "https://api.twitter.com/1.1/statuses/update.json", h.GetAuthorization(), nil, v)
+	value, _ := doRequest(method, requestUrl, hh.GetAuthorization(), nil, v)
 
 	fmt.Println(value)
 }
@@ -301,9 +369,9 @@ func (h *Hoge1) setDefaultParams() {
 	}
 
 	h.Set(NONCE_PARAM, strconv.FormatInt(nonce.Int63(), 10))
-	h.Set(SIGNATURE_METHOD_PARAM, SIGNATURE_METHOD)
+	h.Set(SIGNATURE_METHOD_PARAM, "HMAC-SHA1")
 	h.Set(TIMESTAMP_PARAM, strconv.FormatInt(timestamp, 10))
-	h.Set(VERSION_PARAM, OAUTH_VERSION)
+	h.Set(VERSION_PARAM, "1.0")
 }
 
 func (h *Hoge1) calcSignature() string {
@@ -350,4 +418,48 @@ func (h *Hoge1) sortedKeys(m map[string]string) []string {
 	sort.Strings(mk)
 
 	return mk
+}
+
+type OAuthError struct {
+	prefix string
+	msg    string
+}
+
+func (oe OAuthError) Error() string {
+	return "OAuthError: " + oe.prefix + ": " + oe.msg
+}
+
+type Cache interface {
+	Token() (*Token, error)
+	PutToken(*Token) error
+}
+
+type CacheFile string
+
+func (f CacheFile) Token() (*Token, error) {
+	file, err := os.Open(string(f))
+	if err != nil {
+		return nil, OAuthError{"CacheFile.Token", err.Error()}
+	}
+	defer file.Close()
+	tok := &Token{}
+	if err := json.NewDecoder(file).Decode(tok); err != nil {
+		return nil, OAuthError{"CacheFile.Token", err.Error()}
+	}
+	return tok, nil
+}
+
+func (f CacheFile) PutToken(tok *Token) error {
+	file, err := os.OpenFile(string(f), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return OAuthError{"CacheFile.PutToken", err.Error()}
+	}
+	if err := json.NewEncoder(file).Encode(tok); err != nil {
+		file.Close()
+		return OAuthError{"CacheFile.PutToken", err.Error()}
+	}
+	if err := file.Close(); err != nil {
+		return OAuthError{"CacheFile.PutToken", err.Error()}
+	}
+	return nil
 }
