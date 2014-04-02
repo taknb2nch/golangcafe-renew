@@ -229,9 +229,15 @@ func percentEncode(str string) string {
 	return s
 }
 
+// 以下のパラメータは自動的にセットされます。
+// oauth_nonce
+// oauth_signature_method
+// oauth_timestamp
+// oauth_version
 type Hoge1 struct {
-	Method           string
-	Url              string
+	Method string
+	Url    string
+
 	consumerKey      string
 	consumerSecret   string
 	oauthToken       string
