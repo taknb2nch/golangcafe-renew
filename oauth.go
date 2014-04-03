@@ -1,4 +1,4 @@
-package main
+package oauth
 
 import (
 	"crypto/hmac"
@@ -20,64 +20,23 @@ import (
 )
 
 const (
-	CALLBACK_PARAM         = "oauth_callback"
-	CONSUMER_KEY_PARAM     = "oauth_consumer_key"
-	NONCE_PARAM            = "oauth_nonce"
-	SESSION_HANDLE_PARAM   = "oauth_session_handle"
-	SIGNATURE_METHOD_PARAM = "oauth_signature_method"
-	SIGNATURE_PARAM        = "oauth_signature"
-	TIMESTAMP_PARAM        = "oauth_timestamp"
-	TOKEN_PARAM            = "oauth_token"
-	TOKEN_SECRET_PARAM     = "oauth_token_secret"
-	VERIFIER_PARAM         = "oauth_verifier"
-	VERSION_PARAM          = "oauth_version"
+	callbackParam        = "oauth_callback"
+	consumerKeyParam     = "oauth_consumer_key"
+	nonceParam           = "oauth_nonce"
+	signatureParam       = "oauth_signature"
+	signatureMethodParam = "oauth_signature_method"
+	timestampParam       = "oauth_timestamp"
+	tokenParam           = "oauth_token"
+	tokenSecretParam     = "oauth_token_secret"
+	verifierParam        = "oauth_verifier"
+	versionParam         = "oauth_version"
+	oauthTokenKey        = "oauth_token"
+	oauthTokenSecretKey  = "oauth_token_secret"
 )
 
-func main() {
-	var verifyUrl string
-	var verifyCode string
-	var err error
-
-	config := &Config{
-		ConsumerKey:     "g43py4E3BUGjXjOWhxWjg",
-		ConsumerSecret:  "EdqZpFtdmDBnpdEtGcIOzNmUetj29FgVZ0jZQNxzk",
-		RequestTokenUrl: "https://api.twitter.com/oauth/request_token",
-		AuthorizeUrl:    "https://api.twitter.com/oauth/authorize",
-		AccessTokenUrl:  "https://api.twitter.com/oauth/access_token",
-		TokenCache:      CacheFile("cache.json"),
-	}
-
-	h := HogeHoge{Config: config}
-
-	token, err := config.TokenCache.Token()
-
-	if err != nil {
-		verifyUrl, err = h.GetAuthUrl()
-		if err != nil {
-			log.Fatalln(err)
-		}
-
-		fmt.Println("Visit this URL to get a code, then enter below this.\n")
-		fmt.Println(verifyUrl)
-		fmt.Printf("> ")
-		fmt.Scanf("%s\n", &verifyCode)
-
-		token, err = h.Exchange(verifyCode)
-		if err != nil {
-			log.Fatalln(err)
-		}
-	}
-
-	h.Token = token
-
-	v := make(url.Values)
-	//v.Add("status", "Hello Ladies + Gentlemen, a signed OAuth request!")
-	v.Add("status", "post from go program. "+time.Now().String()+" #gdgchugoku")
-	v.Add("lat", "37.7821120598956")
-	v.Add("long", "-122.400612831116")
-
-	h.DoRequest("POST", "https://api.twitter.com/1.1/statuses/update.json", v)
-}
+const (
+	SESSION_HANDLE_PARAM = "oauth_session_handle"
+)
 
 type Config struct {
 	ConsumerKey     string
@@ -103,16 +62,16 @@ type HogeHoge struct {
 }
 
 func (h *HogeHoge) GetAuthUrl() (string, error) {
-	if err := h.step1(); err != nil {
+	if err := h.doRequestToken(); err != nil {
 		return "", err
 	}
 
-	return h.Config.AuthorizeUrl + "?oauth_token=" + h.tempToken, nil
+	return h.Config.AuthorizeUrl + "?" + tokenParam + "=" + h.tempToken, nil
 }
 
 func (h *HogeHoge) Exchange(verifyCode string) (*Token, error) {
 
-	token, err := h.step3(verifyCode)
+	token, err := h.doAccessToken(verifyCode)
 	if err != nil {
 		return nil, err
 	}
@@ -137,24 +96,24 @@ func (h *HogeHoge) Exchange(verifyCode string) (*Token, error) {
 	・oauth_token_secret ・・・ ユーザの秘密鍵
 	・oauth_callback_confirmed ・・・ OKだった場合これが「true」になる。なお、そもそも失敗した場合、HTTPプロトコルの「401」
 */
-func (h *HogeHoge) step1() error {
-	hh := NewHoge1(
-		"GET",
-		h.Config.RequestTokenUrl,
+func (h *HogeHoge) doRequestToken() error {
+	hh := NewGenerator(
 		h.Config.ConsumerKey,
 		h.Config.ConsumerSecret,
 		"",
 		"")
 
-	hh.Set(CALLBACK_PARAM, "oob")
+	hh.SetUrl("GET", h.Config.RequestTokenUrl, nil)
+
+	hh.Set(callbackParam, "oob")
 
 	value, err := doRequest("GET", h.Config.RequestTokenUrl, hh.GetAuthorization(), nil, nil)
 	if err != nil {
 		return err
 	}
 
-	h.tempToken = value.Get("oauth_token")
-	h.tempTokenSecret = value.Get("oauth_token_secret")
+	h.tempToken = value.Get(oauthTokenKey)
+	h.tempTokenSecret = value.Get(oauthTokenSecretKey)
 
 	return nil
 }
@@ -177,17 +136,17 @@ func (h *HogeHoge) step1() error {
 	・oauth_token ・・・ 『正式の』アクセストークン
 	・oauth_token_secret ・・・『正式の』アクセストークン秘密鍵
 */
-func (h *HogeHoge) step3(verifyCode string) (*Token, error) {
-	hh := NewHoge1(
-		"POST",
-		h.Config.AccessTokenUrl,
+func (h *HogeHoge) doAccessToken(verifyCode string) (*Token, error) {
+	hh := NewGenerator(
 		h.Config.ConsumerKey,
 		h.Config.ConsumerSecret,
 		h.tempToken,
 		h.tempTokenSecret)
 
-	hh.Set(CALLBACK_PARAM, "oob")
-	hh.Set(VERIFIER_PARAM, verifyCode)
+	hh.SetUrl("POST", h.Config.AccessTokenUrl, nil)
+
+	hh.Set(callbackParam, "oob")
+	hh.Set(verifierParam, verifyCode)
 
 	value, err := doRequest("POST", h.Config.AccessTokenUrl, hh.GetAuthorization(), nil, nil)
 	if err != nil {
@@ -195,8 +154,8 @@ func (h *HogeHoge) step3(verifyCode string) (*Token, error) {
 	}
 
 	tok := &Token{
-		OAuthToken:       value.Get("oauth_token"),
-		OAuthTokenSecret: value.Get("oauth_token_secret"),
+		OAuthToken:       value.Get(oauthTokenKey),
+		OAuthTokenSecret: value.Get(oauthTokenSecretKey),
 	}
 	h.Config.TokenCache.PutToken(tok)
 
@@ -207,19 +166,27 @@ func (h *HogeHoge) step3(verifyCode string) (*Token, error) {
 }
 
 func (h *HogeHoge) DoRequest(method, requestUrl string, v url.Values) {
-	hh := NewHoge1(
-		method,
-		requestUrl,
+	hh := NewGenerator(
 		h.Config.ConsumerKey,
 		h.Config.ConsumerSecret,
 		h.Token.OAuthToken,
 		h.Token.OAuthTokenSecret)
 
-	hh.SetValues(v)
+	hh.SetUrl(method, requestUrl, v)
 
 	value, _ := doRequest(method, requestUrl, hh.GetAuthorization(), nil, v)
 
 	fmt.Println(value)
+}
+
+func (h *HogeHoge) GetGenerator() Generator {
+	hh := NewGenerator(
+		h.Config.ConsumerKey,
+		h.Config.ConsumerSecret,
+		h.Token.OAuthToken,
+		h.Token.OAuthTokenSecret)
+
+	return hh
 }
 
 func doRequest(method, requestUrl, oauthHeader string, header http.Header, values url.Values) (url.Values, error) {
@@ -233,7 +200,7 @@ func doRequest(method, requestUrl, oauthHeader string, header http.Header, value
 	if values != nil {
 		s := ""
 		for k, _ := range values {
-			s += percentEncode(k) + "=" + percentEncode(values.Get(k)) + "&"
+			s += PercentEncode(k) + "=" + PercentEncode(values.Get(k)) + "&"
 		}
 		pd = s[:len(s)-1]
 	}
@@ -284,28 +251,15 @@ func doRequest(method, requestUrl, oauthHeader string, header http.Header, value
 	return value, nil
 }
 
-func percentEncode(str string) string {
-	s := url.QueryEscape(str)
-
-	//.replace("+", "%20")
-	//.replace("*", "%2A")
-	//.replace("%7E", "~");
-	s = strings.Replace(s, "+", "%20", -1)
-	s = strings.Replace(s, "*", "%2A", -1)
-	s = strings.Replace(s, "%7E", "~", -1)
-
-	return s
-}
-
-// 以下のパラメータは自動的にセットされます。
+// Authorization header generator.
+// Following parameters are set automatically, when calculating.
 // oauth_nonce
 // oauth_signature_method
 // oauth_timestamp
 // oauth_version
-type Hoge1 struct {
-	Method string
-	Url    string
-
+type Generator struct {
+	method           string
+	requestUrl       string
 	consumerKey      string
 	consumerSecret   string
 	oauthToken       string
@@ -313,38 +267,46 @@ type Hoge1 struct {
 	params           map[string]string
 }
 
-func NewHoge1(method, url, consumerKey, consumerSecret, oauthToken, oauthTokenSecret string) Hoge1 {
-	h := Hoge1{
-		Method:           method,
-		Url:              url,
+// NewGenerator returns a new Generator.
+// Specify "", if oauthTokenSecret and oauthToken are not exist.
+func NewGenerator(consumerKey, consumerSecret, oauthToken, oauthTokenSecret string) Generator {
+	h := Generator{
 		consumerKey:      consumerKey,
 		consumerSecret:   consumerSecret,
 		oauthToken:       oauthToken,
 		oauthTokenSecret: oauthTokenSecret,
 	}
-	h.Clear()
+	h.clear()
 
 	return h
 }
 
-func (h *Hoge1) Clear() {
+func (h *Generator) clear() {
 	h.params = make(map[string]string)
 }
 
-func (h *Hoge1) Set(k, v string) {
-	h.params[percentEncode(k)] = percentEncode(v)
+// Set sets the key to value. It replaces any existing values.
+func (h *Generator) Set(k, v string) {
+	h.params[PercentEncode(k)] = PercentEncode(v)
 }
 
-func (h *Hoge1) SetValues(values url.Values) {
-	for k, _ := range values {
-		h.Set(k, values.Get(k))
+// SetUrl sets the method, requestUrl and values.
+func (h *Generator) SetUrl(method, requestUrl string, values url.Values) {
+	h.method = method
+	h.requestUrl = requestUrl
+
+	if values != nil {
+		for k, _ := range values {
+			h.Set(k, values.Get(k))
+		}
 	}
 }
 
-func (h *Hoge1) GetAuthorization() string {
+// GetAuthorization returns the value for Authorization header.
+func (h *Generator) GetAuthorization() string {
 	h.setDefaultParams()
 
-	h.Set("oauth_signature", h.calcSignature())
+	h.Set(signatureParam, h.calcSignature())
 
 	mk := h.sortedKeys(h.params)
 
@@ -357,24 +319,24 @@ func (h *Hoge1) GetAuthorization() string {
 	return s[:len(s)-1]
 }
 
-func (h *Hoge1) setDefaultParams() {
+func (h *Generator) setDefaultParams() {
 	now := time.Now()
 	timestamp := now.Unix()
 	nonce := rand.New(rand.NewSource(now.UnixNano()))
 
-	h.Set(CONSUMER_KEY_PARAM, h.consumerKey)
+	h.Set(consumerKeyParam, h.consumerKey)
 
 	if h.oauthToken != "" {
-		h.Set(TOKEN_PARAM, h.oauthToken)
+		h.Set(tokenParam, h.oauthToken)
 	}
 
-	h.Set(NONCE_PARAM, strconv.FormatInt(nonce.Int63(), 10))
-	h.Set(SIGNATURE_METHOD_PARAM, "HMAC-SHA1")
-	h.Set(TIMESTAMP_PARAM, strconv.FormatInt(timestamp, 10))
-	h.Set(VERSION_PARAM, "1.0")
+	h.Set(nonceParam, strconv.FormatInt(nonce.Int63(), 10))
+	h.Set(signatureMethodParam, "HMAC-SHA1")
+	h.Set(timestampParam, strconv.FormatInt(timestamp, 10))
+	h.Set(versionParam, "1.0")
 }
 
-func (h *Hoge1) calcSignature() string {
+func (h *Generator) calcSignature() string {
 	mk := h.sortedKeys(h.params)
 
 	// Parameter string
@@ -385,12 +347,12 @@ func (h *Hoge1) calcSignature() string {
 	}
 
 	// Signature base string
-	sbs := percentEncode(h.Method) + "&" + percentEncode(h.Url) + "&" + percentEncode(ps[:len(ps)-1])
+	sbs := PercentEncode(h.method) + "&" + PercentEncode(h.requestUrl) + "&" + PercentEncode(ps[:len(ps)-1])
 
 	//fmt.Println(sbs)
 
 	// Signing key
-	signingKey := percentEncode(h.consumerSecret) + "&" + percentEncode(h.oauthTokenSecret)
+	signingKey := PercentEncode(h.consumerSecret) + "&" + PercentEncode(h.oauthTokenSecret)
 
 	//fmt.Println(signingKey)
 
@@ -408,7 +370,7 @@ func (h *Hoge1) calcSignature() string {
 	return string(base64signature)
 }
 
-func (h *Hoge1) sortedKeys(m map[string]string) []string {
+func (h *Generator) sortedKeys(m map[string]string) []string {
 	mk := make([]string, len(m))
 	i := 0
 	for k, _ := range m {
@@ -418,6 +380,20 @@ func (h *Hoge1) sortedKeys(m map[string]string) []string {
 	sort.Strings(mk)
 
 	return mk
+}
+
+// PercentEncode encodes the string so it can be safely placed inside a URL query.
+func PercentEncode(str string) string {
+	s := url.QueryEscape(str)
+
+	//.replace("+", "%20")
+	//.replace("*", "%2A")
+	//.replace("%7E", "~");
+	s = strings.Replace(s, "+", "%20", -1)
+	s = strings.Replace(s, "*", "%2A", -1)
+	s = strings.Replace(s, "%7E", "~", -1)
+
+	return s
 }
 
 type OAuthError struct {
