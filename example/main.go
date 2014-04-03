@@ -23,7 +23,7 @@ func main() {
 		TokenCache:      oauth.CacheFile("cache.json"),
 	}
 
-	h := oauth.HogeHoge{Config: config}
+	h := oauth.Transport{Config: config}
 
 	token, err := config.TokenCache.Token()
 

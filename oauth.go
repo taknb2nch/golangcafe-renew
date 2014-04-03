@@ -34,10 +34,6 @@ const (
 	oauthTokenSecretKey  = "oauth_token_secret"
 )
 
-const (
-	SESSION_HANDLE_PARAM = "oauth_session_handle"
-)
-
 type Config struct {
 	ConsumerKey     string
 	ConsumerSecret  string
@@ -53,15 +49,15 @@ type Token struct {
 	OAuthTokenSecret string
 }
 
-type HogeHoge struct {
-	Config *Config
-	Token  *Token
+type Transport struct {
+	*Config
+	*Token
 
 	tempToken       string
 	tempTokenSecret string
 }
 
-func (h *HogeHoge) GetAuthUrl() (string, error) {
+func (h *Transport) GetAuthUrl() (string, error) {
 	if err := h.doRequestToken(); err != nil {
 		return "", err
 	}
@@ -69,8 +65,7 @@ func (h *HogeHoge) GetAuthUrl() (string, error) {
 	return h.Config.AuthorizeUrl + "?" + tokenParam + "=" + h.tempToken, nil
 }
 
-func (h *HogeHoge) Exchange(verifyCode string) (*Token, error) {
-
+func (h *Transport) Exchange(verifyCode string) (*Token, error) {
 	token, err := h.doAccessToken(verifyCode)
 	if err != nil {
 		return nil, err
@@ -79,35 +74,19 @@ func (h *HogeHoge) Exchange(verifyCode string) (*Token, error) {
 	return token, nil
 }
 
-/*
-	・コンシューマキー ( oauth_consumer_key )
-	・ユーザが承認したときに（最終的にコンシューマの使用を許可させるために）差し戻すURI ( oauth_callback )
-	あと、必要なもの
-	・OAuthのバージョン (oauth_version )
-	・タイムスタンプ ( oauth_timestamp )
-	・当該アクセスに対して、一意性を表す文字列( oauth_nonce )
-	・署名のプロトコル( oauth_signature_method )
-	・署名( oauth_signature )
-*/
-// 署名キー
-// "Consumer SecretをURLエンコードした値"&"Token Secretの値"
-/*
-	・oauth_token ・・・ユーザのトークン（仮）
-	・oauth_token_secret ・・・ ユーザの秘密鍵
-	・oauth_callback_confirmed ・・・ OKだった場合これが「true」になる。なお、そもそも失敗した場合、HTTPプロトコルの「401」
-*/
-func (h *HogeHoge) doRequestToken() error {
+//
+func (h *Transport) doRequestToken() error {
 	hh := NewGenerator(
-		h.Config.ConsumerKey,
-		h.Config.ConsumerSecret,
+		h.ConsumerKey,
+		h.ConsumerSecret,
 		"",
 		"")
 
-	hh.SetUrl("GET", h.Config.RequestTokenUrl, nil)
+	hh.SetUrl("GET", h.RequestTokenUrl, nil)
 
 	hh.Set(callbackParam, "oob")
 
-	value, err := doRequest("GET", h.Config.RequestTokenUrl, hh.GetAuthorization(), nil, nil)
+	value, err := doRequest("GET", h.RequestTokenUrl, hh.GetAuthorization(), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -118,37 +97,20 @@ func (h *HogeHoge) doRequestToken() error {
 	return nil
 }
 
-// func step2(oauthToken string) string {
-// 	return AUTHORIZE_URL + "?oauth_token=" + oauthToken
-// }
-
-/*
-	・oauth_consumer_key ・・・ コンシューマのキー
-	・oauth_token ・・・ステップ２で戻ってきた oauth_token（ユーザごとの、ね）
-	あと、必要なもの
-	・OAuthのバージョン (oauth_version )
-	・タイムスタンプ ( oauth_timestamp )
-	・当該アクセスに対して、一意性を表す文字列( oauth_nonce )
-	・署名のプロトコル( oauth_signature_method )
-	・署名( oauth_signature )
-*/
-/*
-	・oauth_token ・・・ 『正式の』アクセストークン
-	・oauth_token_secret ・・・『正式の』アクセストークン秘密鍵
-*/
-func (h *HogeHoge) doAccessToken(verifyCode string) (*Token, error) {
+//
+func (h *Transport) doAccessToken(verifyCode string) (*Token, error) {
 	hh := NewGenerator(
-		h.Config.ConsumerKey,
-		h.Config.ConsumerSecret,
+		h.ConsumerKey,
+		h.ConsumerSecret,
 		h.tempToken,
 		h.tempTokenSecret)
 
-	hh.SetUrl("POST", h.Config.AccessTokenUrl, nil)
+	hh.SetUrl("POST", h.AccessTokenUrl, nil)
 
 	hh.Set(callbackParam, "oob")
 	hh.Set(verifierParam, verifyCode)
 
-	value, err := doRequest("POST", h.Config.AccessTokenUrl, hh.GetAuthorization(), nil, nil)
+	value, err := doRequest("POST", h.AccessTokenUrl, hh.GetAuthorization(), nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +119,7 @@ func (h *HogeHoge) doAccessToken(verifyCode string) (*Token, error) {
 		OAuthToken:       value.Get(oauthTokenKey),
 		OAuthTokenSecret: value.Get(oauthTokenSecretKey),
 	}
-	h.Config.TokenCache.PutToken(tok)
+	h.TokenCache.PutToken(tok)
 
 	h.tempToken = ""
 	h.tempTokenSecret = ""
@@ -165,10 +127,10 @@ func (h *HogeHoge) doAccessToken(verifyCode string) (*Token, error) {
 	return tok, nil
 }
 
-func (h *HogeHoge) DoRequest(method, requestUrl string, v url.Values) {
+func (h *Transport) DoRequest(method, requestUrl string, v url.Values) {
 	hh := NewGenerator(
-		h.Config.ConsumerKey,
-		h.Config.ConsumerSecret,
+		h.ConsumerKey,
+		h.ConsumerSecret,
 		h.Token.OAuthToken,
 		h.Token.OAuthTokenSecret)
 
@@ -179,12 +141,12 @@ func (h *HogeHoge) DoRequest(method, requestUrl string, v url.Values) {
 	fmt.Println(value)
 }
 
-func (h *HogeHoge) GetGenerator() Generator {
+func (h *Transport) GetGenerator() Generator {
 	hh := NewGenerator(
-		h.Config.ConsumerKey,
-		h.Config.ConsumerSecret,
-		h.Token.OAuthToken,
-		h.Token.OAuthTokenSecret)
+		h.ConsumerKey,
+		h.ConsumerSecret,
+		h.OAuthToken,
+		h.OAuthTokenSecret)
 
 	return hh
 }
