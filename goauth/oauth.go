@@ -358,15 +358,6 @@ func PercentEncode(str string) string {
 	return s
 }
 
-type OAuthError struct {
-	prefix string
-	msg    string
-}
-
-func (oe OAuthError) Error() string {
-	return "OAuthError: " + oe.prefix + ": " + oe.msg
-}
-
 type Cache interface {
 	Token() (*Token, error)
 	PutToken(*Token) error
@@ -375,29 +366,44 @@ type Cache interface {
 type CacheFile string
 
 func (f CacheFile) Token() (*Token, error) {
-	file, err := os.Open(string(f))
+	var file *os.File
+	var err error
+
+	file, err = os.Open(string(f))
+
 	if err != nil {
-		return nil, OAuthError{"CacheFile.Token", err.Error()}
+		return nil, err
 	}
+
 	defer file.Close()
+
 	tok := &Token{}
-	if err := json.NewDecoder(file).Decode(tok); err != nil {
-		return nil, OAuthError{"CacheFile.Token", err.Error()}
+
+	if err = json.NewDecoder(file).Decode(tok); err != nil {
+		return nil, err
 	}
+
 	return tok, nil
 }
 
 func (f CacheFile) PutToken(tok *Token) error {
-	file, err := os.OpenFile(string(f), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	var file *os.File
+	var err error
+
+	file, err = os.OpenFile(string(f), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+
 	if err != nil {
-		return OAuthError{"CacheFile.PutToken", err.Error()}
+		return err
 	}
-	if err := json.NewEncoder(file).Encode(tok); err != nil {
+
+	if err = json.NewEncoder(file).Encode(tok); err != nil {
 		file.Close()
-		return OAuthError{"CacheFile.PutToken", err.Error()}
+		return err
 	}
-	if err := file.Close(); err != nil {
-		return OAuthError{"CacheFile.PutToken", err.Error()}
+
+	if err = file.Close(); err != nil {
+		return err
 	}
+
 	return nil
 }
