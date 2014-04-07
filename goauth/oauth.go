@@ -227,6 +227,8 @@ type Generator struct {
 	oauthToken       string
 	oauthTokenSecret string
 	params           map[string]string
+
+	calcTimeAndNonce func() (string, string)
 }
 
 // NewGenerator returns a new Generator.
@@ -245,6 +247,12 @@ func NewGenerator(consumerKey, consumerSecret, oauthToken, oauthTokenSecret stri
 
 func (h *Generator) clear() {
 	h.params = make(map[string]string)
+
+	h.calcTimeAndNonce = func() (string, string) {
+		now := time.Now()
+
+		return strconv.FormatInt(now.Unix(), 10), strconv.FormatInt(rand.New(rand.NewSource(now.UnixNano())).Int63(), 10)
+	}
 }
 
 // Set sets the key to value. It replaces any existing values.
@@ -253,15 +261,27 @@ func (h *Generator) SetParam(k, v string) {
 }
 
 // SetUrl sets the method, requestUrl and values.
-func (h *Generator) SetUrl(method, requestUrl string, values url.Values) {
+func (h *Generator) SetUrl(method, requestUrl string, values url.Values) error {
 	h.method = method
-	h.requestUrl = requestUrl
+
+	u, err := url.Parse(requestUrl)
+	if err != nil {
+		return err
+	}
+
+	h.requestUrl = u.Scheme + "://" + u.Host + u.Path
+	qs := u.Query()
+	for k, _ := range qs {
+		h.SetParam(k, qs.Get(k))
+	}
 
 	if values != nil {
 		for k, _ := range values {
 			h.SetParam(k, values.Get(k))
 		}
 	}
+
+	return nil
 }
 
 // GetAuthorization returns the value for Authorization header.
@@ -282,7 +302,7 @@ func (h *Generator) GetAuthorization() string {
 }
 
 func (h *Generator) setDefaultParams() {
-	timestamp, nonce := h.getTimestampAndNonce()
+	timestamp, nonce := h.calcTimeAndNonce()
 
 	h.SetParam(consumerKeyParam, h.consumerKey)
 
@@ -290,16 +310,10 @@ func (h *Generator) setDefaultParams() {
 		h.SetParam(tokenParam, h.oauthToken)
 	}
 
-	h.SetParam(nonceParam, strconv.FormatInt(nonce, 10))
+	h.SetParam(nonceParam, nonce)
 	h.SetParam(signatureMethodParam, "HMAC-SHA1")
-	h.SetParam(timestampParam, strconv.FormatInt(timestamp, 10))
+	h.SetParam(timestampParam, timestamp)
 	h.SetParam(versionParam, "1.0")
-}
-
-func (g *Generator) getTimestampAndNonce() (int64, int64) {
-	now := time.Now()
-
-	return now.Unix(), rand.New(rand.NewSource(now.UnixNano())).Int63()
 }
 
 func (h *Generator) calcSignature() string {
@@ -311,6 +325,8 @@ func (h *Generator) calcSignature() string {
 	for _, k := range mk {
 		ps += k + "=" + h.params[k] + "&"
 	}
+
+	//fmt.Println(ps)
 
 	// Signature base string
 	sbs := PercentEncode(h.method) + "&" + PercentEncode(h.requestUrl) + "&" + PercentEncode(ps[:len(ps)-1])
