@@ -1,9 +1,10 @@
-package main
+package oauth
 
 import (
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -11,179 +12,143 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func main() {
-	var verifyCode string
-	var oauthToken string
-	var oauthTokenSecret string
-
-	v := step1()
-	oauthToken = v.Get("oauth_token")
-	oauthTokenSecret = v.Get("oauth_token_secret")
-
-	url := step2(oauthToken)
-
-	fmt.Println(url)
-	fmt.Scanf("%s\n", &verifyCode)
-
-	v = step3(verifyCode, oauthToken, oauthTokenSecret)
-	oauthToken = v.Get("oauth_token")
-	oauthTokenSecret = v.Get("oauth_token_secret")
-
-	step4(oauthToken, oauthTokenSecret)
-}
-
 const (
-	consumerKey    = "g43py4E3BUGjXjOWhxWjg"
-	consumerSecret = "EdqZpFtdmDBnpdEtGcIOzNmUetj29FgVZ0jZQNxzk"
-
-	OAUTH_VERSION    = "1.0"
-	SIGNATURE_METHOD = "HMAC-SHA1"
-
-	CALLBACK_PARAM         = "oauth_callback"
-	CONSUMER_KEY_PARAM     = "oauth_consumer_key"
-	NONCE_PARAM            = "oauth_nonce"
-	SESSION_HANDLE_PARAM   = "oauth_session_handle"
-	SIGNATURE_METHOD_PARAM = "oauth_signature_method"
-	SIGNATURE_PARAM        = "oauth_signature"
-	TIMESTAMP_PARAM        = "oauth_timestamp"
-	TOKEN_PARAM            = "oauth_token"
-	TOKEN_SECRET_PARAM     = "oauth_token_secret"
-	VERIFIER_PARAM         = "oauth_verifier"
-	VERSION_PARAM          = "oauth_version"
-
-	REQUEST_TOKEN_URL = "https://api.twitter.com/oauth/request_token"
-	AUTHORIZE_URL     = "https://api.twitter.com/oauth/authorize"
-	ACCESS_TOKEN_URL  = "https://api.twitter.com/oauth/access_token"
+	callbackParam        = "oauth_callback"
+	consumerKeyParam     = "oauth_consumer_key"
+	nonceParam           = "oauth_nonce"
+	signatureParam       = "oauth_signature"
+	signatureMethodParam = "oauth_signature_method"
+	timestampParam       = "oauth_timestamp"
+	tokenParam           = "oauth_token"
+	tokenSecretParam     = "oauth_token_secret"
+	verifierParam        = "oauth_verifier"
+	versionParam         = "oauth_version"
+	oauthTokenKey        = "oauth_token"
+	oauthTokenSecretKey  = "oauth_token_secret"
 )
 
-func step1() url.Values {
-	/*
-		・コンシューマキー ( oauth_consumer_key )
-		・ユーザが承認したときに（最終的にコンシューマの使用を許可させるために）差し戻すURI ( oauth_callback )
-		あと、必要なもの
-		・OAuthのバージョン (oauth_version )
-		・タイムスタンプ ( oauth_timestamp )
-		・当該アクセスに対して、一意性を表す文字列( oauth_nonce )
-		・署名のプロトコル( oauth_signature_method )
-		・署名( oauth_signature )
-	*/
-	// 署名キー
-	// "Consumer SecretをURLエンコードした値"&"Token Secretの値"
+type Config struct {
+	ConsumerKey     string
+	ConsumerSecret  string
+	RequestTokenUrl string
+	AuthorizeUrl    string
+	AccessTokenUrl  string
 
-	now := time.Now()
-	timestamp := now.Unix()
-	nonce := rand.New(rand.NewSource(now.UnixNano()))
+	TokenCache CacheFile
+}
 
-	h := NewHoge1(
-		"GET",
-		REQUEST_TOKEN_URL,
-		consumerSecret,
+type Token struct {
+	OAuthToken       string
+	OAuthTokenSecret string
+}
+
+type Transport struct {
+	*Config
+	*Token
+
+	tempToken       string
+	tempTokenSecret string
+}
+
+func (h *Transport) GetAuthUrl() (string, error) {
+	if err := h.doRequestToken(); err != nil {
+		return "", err
+	}
+
+	return h.Config.AuthorizeUrl + "?" + tokenParam + "=" + h.tempToken, nil
+}
+
+func (h *Transport) Exchange(verifyCode string) (*Token, error) {
+	token, err := h.doAccessToken(verifyCode)
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
+
+//
+func (h *Transport) doRequestToken() error {
+	hh := NewGenerator(
+		h.ConsumerKey,
+		h.ConsumerSecret,
+		"",
 		"")
 
-	h.Set(NONCE_PARAM, strconv.FormatInt(nonce.Int63(), 10))
-	h.Set(VERSION_PARAM, OAUTH_VERSION)
-	h.Set(TIMESTAMP_PARAM, strconv.FormatInt(timestamp, 10))
-	h.Set(SIGNATURE_METHOD_PARAM, SIGNATURE_METHOD)
+	hh.SetUrl("GET", h.RequestTokenUrl, nil)
 
-	h.Set(CONSUMER_KEY_PARAM, consumerKey)
+	hh.SetParam(callbackParam, "oob")
 
-	h.Set(CALLBACK_PARAM, "oob")
+	value, err := doRequest("GET", h.RequestTokenUrl, hh.GetAuthorization(), nil, nil)
+	if err != nil {
+		return err
+	}
 
-	oauthHeader := h.Get()
+	h.tempToken = value.Get(oauthTokenKey)
+	h.tempTokenSecret = value.Get(oauthTokenSecretKey)
 
-	value, _ := doRequest("GET", REQUEST_TOKEN_URL, oauthHeader, nil, nil)
-
-	/*
-		・oauth_token ・・・ユーザのトークン（仮）
-		・oauth_token_secret ・・・ ユーザの秘密鍵
-		・oauth_callback_confirmed ・・・ OKだった場合これが「true」になる。なお、そもそも失敗した場合、HTTPプロトコルの「401」
-	*/
-	return value
+	return nil
 }
 
-func step2(oauthToken string) string {
-	return AUTHORIZE_URL + "?oauth_token=" + oauthToken
+//
+func (h *Transport) doAccessToken(verifyCode string) (*Token, error) {
+	hh := NewGenerator(
+		h.ConsumerKey,
+		h.ConsumerSecret,
+		h.tempToken,
+		h.tempTokenSecret)
+
+	hh.SetUrl("POST", h.AccessTokenUrl, nil)
+
+	hh.SetParam(callbackParam, "oob")
+	hh.SetParam(verifierParam, verifyCode)
+
+	value, err := doRequest("POST", h.AccessTokenUrl, hh.GetAuthorization(), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	tok := &Token{
+		OAuthToken:       value.Get(oauthTokenKey),
+		OAuthTokenSecret: value.Get(oauthTokenSecretKey),
+	}
+	h.TokenCache.PutToken(tok)
+
+	h.tempToken = ""
+	h.tempTokenSecret = ""
+
+	return tok, nil
 }
 
-func step3(verifyCode, oauthToken, oauthTokenSecret string) url.Values {
-	/*
-		・oauth_consumer_key ・・・ コンシューマのキー
-		・oauth_token ・・・ステップ２で戻ってきた oauth_token（ユーザごとの、ね）
-		あと、必要なもの
-		・OAuthのバージョン (oauth_version )
-		・タイムスタンプ ( oauth_timestamp )
-		・当該アクセスに対して、一意性を表す文字列( oauth_nonce )
-		・署名のプロトコル( oauth_signature_method )
-		・署名( oauth_signature )
-	*/
-	now := time.Now()
-	timestamp := now.Unix()
-	nonce := rand.New(rand.NewSource(now.UnixNano()))
+func (h *Transport) DoRequest(method, requestUrl string, v url.Values) {
+	hh := NewGenerator(
+		h.ConsumerKey,
+		h.ConsumerSecret,
+		h.Token.OAuthToken,
+		h.Token.OAuthTokenSecret)
 
-	h := NewHoge1(
-		"POST",
-		ACCESS_TOKEN_URL,
-		consumerSecret,
-		oauthTokenSecret)
+	hh.SetUrl(method, requestUrl, v)
 
-	h.Set(NONCE_PARAM, strconv.FormatInt(nonce.Int63(), 10))
-	h.Set(VERSION_PARAM, OAUTH_VERSION)
-	h.Set(TIMESTAMP_PARAM, strconv.FormatInt(timestamp, 10))
-	h.Set(SIGNATURE_METHOD_PARAM, SIGNATURE_METHOD)
+	value, _ := doRequest(method, requestUrl, hh.GetAuthorization(), nil, v)
 
-	h.Set(CONSUMER_KEY_PARAM, consumerKey)
-	h.Set(TOKEN_PARAM, oauthToken)
-
-	h.Set(CALLBACK_PARAM, "oob")
-	h.Set(VERIFIER_PARAM, verifyCode)
-
-	oauthHeader := h.Get()
-
-	value, _ := doRequest("POST", ACCESS_TOKEN_URL, oauthHeader, nil, nil)
-
-	/*
-		・oauth_token ・・・ 『正式の』アクセストークン
-		・oauth_token_secret ・・・『正式の』アクセストークン秘密鍵
-	*/
-	return value
+	fmt.Println(value)
 }
 
-func step4(oauthToken, oauthTokenSecret string) {
-	v := make(url.Values)
-	//v.Add("status", "Hello Ladies + Gentlemen, a signed OAuth request!")
-	v.Add("status", "post from go program. "+time.Now().String()+" #gdgchugoku")
-	v.Add("lat", "37.7821120598956")
-	v.Add("long", "-122.400612831116")
+func (h *Transport) GetGenerator() Generator {
+	hh := NewGenerator(
+		h.ConsumerKey,
+		h.ConsumerSecret,
+		h.OAuthToken,
+		h.OAuthTokenSecret)
 
-	now := time.Now()
-	timestamp := now.Unix()
-	nonce := rand.New(rand.NewSource(now.UnixNano()))
-
-	h := NewHoge1(
-		"POST",
-		"https://api.twitter.com/1.1/statuses/update.json",
-		consumerSecret,
-		oauthTokenSecret)
-
-	h.Set(NONCE_PARAM, strconv.FormatInt(nonce.Int63(), 10))
-	h.Set(VERSION_PARAM, OAUTH_VERSION)
-	h.Set(TIMESTAMP_PARAM, strconv.FormatInt(timestamp, 10))
-	h.Set(SIGNATURE_METHOD_PARAM, SIGNATURE_METHOD)
-
-	h.Set(CONSUMER_KEY_PARAM, consumerKey)
-	h.Set(TOKEN_PARAM, oauthToken)
-
-	h.SetValues(v)
-
-	oauthHeader := h.Get()
-
-	doRequest("POST", "https://api.twitter.com/1.1/statuses/update.json", oauthHeader, nil, v)
+	return hh
 }
 
 func doRequest(method, requestUrl, oauthHeader string, header http.Header, values url.Values) (url.Values, error) {
@@ -197,12 +162,12 @@ func doRequest(method, requestUrl, oauthHeader string, header http.Header, value
 	if values != nil {
 		s := ""
 		for k, _ := range values {
-			s += percentEncode(k) + "=" + percentEncode(values.Get(k)) + "&"
+			s += PercentEncode(k) + "=" + PercentEncode(values.Get(k)) + "&"
 		}
 		pd = s[:len(s)-1]
 	}
 
-	fmt.Println(pd)
+	//fmt.Println(pd)
 
 	if req, err = http.NewRequest(method, requestUrl, strings.NewReader(pd)); err != nil {
 		log.Fatalln(err)
@@ -244,59 +209,66 @@ func doRequest(method, requestUrl, oauthHeader string, header http.Header, value
 		return nil, err
 	}
 
-	fmt.Println(value)
+	//fmt.Println(value)
 	return value, nil
 }
 
-func percentEncode(str string) string {
-	s := url.QueryEscape(str)
-
-	//.replace("+", "%20")
-	//.replace("*", "%2A")
-	//.replace("%7E", "~");
-	s = strings.Replace(s, "+", "%20", -1)
-	s = strings.Replace(s, "*", "%2A", -1)
-	s = strings.Replace(s, "%7E", "~", -1)
-
-	return s
-}
-
-type Hoge1 struct {
-	Method           string
-	Url              string
-	ConsumerSecret   string
-	OAuthTokenSecret string
+// Authorization header generator.
+// Following parameters are set automatically, when calculating.
+// oauth_nonce
+// oauth_signature_method
+// oauth_timestamp
+// oauth_version
+type Generator struct {
+	method           string
+	requestUrl       string
+	consumerKey      string
+	consumerSecret   string
+	oauthToken       string
+	oauthTokenSecret string
 	params           map[string]string
 }
 
-func NewHoge1(method, url, consumerSecret, tokenSecret string) Hoge1 {
-	h := Hoge1{
-		Method:           method,
-		Url:              url,
-		ConsumerSecret:   consumerSecret,
-		OAuthTokenSecret: tokenSecret,
+// NewGenerator returns a new Generator.
+// Specify "", if oauthTokenSecret and oauthToken are not exist.
+func NewGenerator(consumerKey, consumerSecret, oauthToken, oauthTokenSecret string) Generator {
+	h := Generator{
+		consumerKey:      consumerKey,
+		consumerSecret:   consumerSecret,
+		oauthToken:       oauthToken,
+		oauthTokenSecret: oauthTokenSecret,
 	}
-	h.Clear()
+	h.clear()
 
 	return h
 }
 
-func (h *Hoge1) Clear() {
+func (h *Generator) clear() {
 	h.params = make(map[string]string)
 }
 
-func (h *Hoge1) Set(k, v string) {
-	h.params[percentEncode(k)] = percentEncode(v)
+// Set sets the key to value. It replaces any existing values.
+func (h *Generator) SetParam(k, v string) {
+	h.params[PercentEncode(k)] = PercentEncode(v)
 }
 
-func (h *Hoge1) SetValues(values url.Values) {
-	for k, _ := range values {
-		h.Set(k, values.Get(k))
+// SetUrl sets the method, requestUrl and values.
+func (h *Generator) SetUrl(method, requestUrl string, values url.Values) {
+	h.method = method
+	h.requestUrl = requestUrl
+
+	if values != nil {
+		for k, _ := range values {
+			h.SetParam(k, values.Get(k))
+		}
 	}
 }
 
-func (h *Hoge1) Get() string {
-	h.params[percentEncode("oauth_signature")] = percentEncode(h.calcSignature())
+// GetAuthorization returns the value for Authorization header.
+func (h *Generator) GetAuthorization() string {
+	h.setDefaultParams()
+
+	h.SetParam(signatureParam, h.calcSignature())
 
 	mk := h.sortedKeys(h.params)
 
@@ -309,25 +281,49 @@ func (h *Hoge1) Get() string {
 	return s[:len(s)-1]
 }
 
-func (h *Hoge1) calcSignature() string {
-	mk := h.sortedKeys(h.params)
+func (h *Generator) setDefaultParams() {
+	timestamp, nonce := h.getTimestampAndNonce()
 
-	ss := ""
+	h.SetParam(consumerKeyParam, h.consumerKey)
 
-	for _, k := range mk {
-		ss += k + "=" + h.params[k] + "&"
+	if h.oauthToken != "" {
+		h.SetParam(tokenParam, h.oauthToken)
 	}
 
-	s := percentEncode(h.Method) + "&" + percentEncode(h.Url) + "&" + percentEncode(ss[:len(ss)-1])
+	h.SetParam(nonceParam, strconv.FormatInt(nonce, 10))
+	h.SetParam(signatureMethodParam, "HMAC-SHA1")
+	h.SetParam(timestampParam, strconv.FormatInt(timestamp, 10))
+	h.SetParam(versionParam, "1.0")
+}
 
-	//fmt.Println(s)
+func (g *Generator) getTimestampAndNonce() (int64, int64) {
+	now := time.Now()
 
-	signingKey := percentEncode(h.ConsumerSecret) + "&" + percentEncode(h.OAuthTokenSecret)
+	return now.Unix(), rand.New(rand.NewSource(now.UnixNano())).Int63()
+}
+
+func (h *Generator) calcSignature() string {
+	mk := h.sortedKeys(h.params)
+
+	// Parameter string
+	ps := ""
+
+	for _, k := range mk {
+		ps += k + "=" + h.params[k] + "&"
+	}
+
+	// Signature base string
+	sbs := PercentEncode(h.method) + "&" + PercentEncode(h.requestUrl) + "&" + PercentEncode(ps[:len(ps)-1])
+
+	//fmt.Println(sbs)
+
+	// Signing key
+	signingKey := PercentEncode(h.consumerSecret) + "&" + PercentEncode(h.oauthTokenSecret)
 
 	//fmt.Println(signingKey)
 
 	hashfun := hmac.New(sha1.New, []byte(signingKey))
-	hashfun.Write([]byte(s))
+	hashfun.Write([]byte(sbs))
 
 	rawsignature := hashfun.Sum(nil)
 
@@ -335,10 +331,12 @@ func (h *Hoge1) calcSignature() string {
 	base64signature := make([]byte, base64.StdEncoding.EncodedLen(len(rawsignature)))
 	base64.StdEncoding.Encode(base64signature, rawsignature)
 
+	//fmt.Println(string(base64signature))
+
 	return string(base64signature)
 }
 
-func (h *Hoge1) sortedKeys(m map[string]string) []string {
+func (h *Generator) sortedKeys(m map[string]string) []string {
 	mk := make([]string, len(m))
 	i := 0
 	for k, _ := range m {
@@ -348,4 +346,58 @@ func (h *Hoge1) sortedKeys(m map[string]string) []string {
 	sort.Strings(mk)
 
 	return mk
+}
+
+// PercentEncode encodes the string so it can be safely placed inside a URL query.
+func PercentEncode(str string) string {
+	s := url.QueryEscape(str)
+	s = strings.Replace(s, "+", "%20", -1)
+	s = strings.Replace(s, "*", "%2A", -1)
+	s = strings.Replace(s, "%7E", "~", -1)
+
+	return s
+}
+
+type OAuthError struct {
+	prefix string
+	msg    string
+}
+
+func (oe OAuthError) Error() string {
+	return "OAuthError: " + oe.prefix + ": " + oe.msg
+}
+
+type Cache interface {
+	Token() (*Token, error)
+	PutToken(*Token) error
+}
+
+type CacheFile string
+
+func (f CacheFile) Token() (*Token, error) {
+	file, err := os.Open(string(f))
+	if err != nil {
+		return nil, OAuthError{"CacheFile.Token", err.Error()}
+	}
+	defer file.Close()
+	tok := &Token{}
+	if err := json.NewDecoder(file).Decode(tok); err != nil {
+		return nil, OAuthError{"CacheFile.Token", err.Error()}
+	}
+	return tok, nil
+}
+
+func (f CacheFile) PutToken(tok *Token) error {
+	file, err := os.OpenFile(string(f), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return OAuthError{"CacheFile.PutToken", err.Error()}
+	}
+	if err := json.NewEncoder(file).Encode(tok); err != nil {
+		file.Close()
+		return OAuthError{"CacheFile.PutToken", err.Error()}
+	}
+	if err := file.Close(); err != nil {
+		return OAuthError{"CacheFile.PutToken", err.Error()}
+	}
+	return nil
 }
