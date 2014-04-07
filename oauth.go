@@ -84,7 +84,7 @@ func (h *Transport) doRequestToken() error {
 
 	hh.SetUrl("GET", h.RequestTokenUrl, nil)
 
-	hh.Set(callbackParam, "oob")
+	hh.SetParam(callbackParam, "oob")
 
 	value, err := doRequest("GET", h.RequestTokenUrl, hh.GetAuthorization(), nil, nil)
 	if err != nil {
@@ -107,8 +107,8 @@ func (h *Transport) doAccessToken(verifyCode string) (*Token, error) {
 
 	hh.SetUrl("POST", h.AccessTokenUrl, nil)
 
-	hh.Set(callbackParam, "oob")
-	hh.Set(verifierParam, verifyCode)
+	hh.SetParam(callbackParam, "oob")
+	hh.SetParam(verifierParam, verifyCode)
 
 	value, err := doRequest("POST", h.AccessTokenUrl, hh.GetAuthorization(), nil, nil)
 	if err != nil {
@@ -248,7 +248,7 @@ func (h *Generator) clear() {
 }
 
 // Set sets the key to value. It replaces any existing values.
-func (h *Generator) Set(k, v string) {
+func (h *Generator) SetParam(k, v string) {
 	h.params[PercentEncode(k)] = PercentEncode(v)
 }
 
@@ -259,7 +259,7 @@ func (h *Generator) SetUrl(method, requestUrl string, values url.Values) {
 
 	if values != nil {
 		for k, _ := range values {
-			h.Set(k, values.Get(k))
+			h.SetParam(k, values.Get(k))
 		}
 	}
 }
@@ -268,7 +268,7 @@ func (h *Generator) SetUrl(method, requestUrl string, values url.Values) {
 func (h *Generator) GetAuthorization() string {
 	h.setDefaultParams()
 
-	h.Set(signatureParam, h.calcSignature())
+	h.SetParam(signatureParam, h.calcSignature())
 
 	mk := h.sortedKeys(h.params)
 
@@ -282,20 +282,24 @@ func (h *Generator) GetAuthorization() string {
 }
 
 func (h *Generator) setDefaultParams() {
-	now := time.Now()
-	timestamp := now.Unix()
-	nonce := rand.New(rand.NewSource(now.UnixNano()))
+	timestamp, nonce := h.getTimestampAndNonce()
 
-	h.Set(consumerKeyParam, h.consumerKey)
+	h.SetParam(consumerKeyParam, h.consumerKey)
 
 	if h.oauthToken != "" {
-		h.Set(tokenParam, h.oauthToken)
+		h.SetParam(tokenParam, h.oauthToken)
 	}
 
-	h.Set(nonceParam, strconv.FormatInt(nonce.Int63(), 10))
-	h.Set(signatureMethodParam, "HMAC-SHA1")
-	h.Set(timestampParam, strconv.FormatInt(timestamp, 10))
-	h.Set(versionParam, "1.0")
+	h.SetParam(nonceParam, strconv.FormatInt(nonce, 10))
+	h.SetParam(signatureMethodParam, "HMAC-SHA1")
+	h.SetParam(timestampParam, strconv.FormatInt(timestamp, 10))
+	h.SetParam(versionParam, "1.0")
+}
+
+func (g *Generator) getTimestampAndNonce() (int64, int64) {
+	now := time.Now()
+
+	return now.Unix(), rand.New(rand.NewSource(now.UnixNano())).Int63()
 }
 
 func (h *Generator) calcSignature() string {
@@ -347,10 +351,6 @@ func (h *Generator) sortedKeys(m map[string]string) []string {
 // PercentEncode encodes the string so it can be safely placed inside a URL query.
 func PercentEncode(str string) string {
 	s := url.QueryEscape(str)
-
-	//.replace("+", "%20")
-	//.replace("*", "%2A")
-	//.replace("%7E", "~");
 	s = strings.Replace(s, "+", "%20", -1)
 	s = strings.Replace(s, "*", "%2A", -1)
 	s = strings.Replace(s, "%7E", "~", -1)

@@ -1,6 +1,10 @@
+//
+// $ go run main.go key=consumerKey secret=consumerSecret
+//
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"net/url"
@@ -9,14 +13,21 @@ import (
 	"github.com/taknb2nch/goauth"
 )
 
+var (
+	consumerKey    = flag.String("key", "", "Consumer Key")
+	consumerSecret = flag.String("secret", "", "Consumer Secret")
+)
+
 func main() {
+	flag.Parse()
+
 	var verifyUrl string
 	var verifyCode string
 	var err error
 
 	config := &oauth.Config{
-		ConsumerKey:     "g43py4E3BUGjXjOWhxWjg",
-		ConsumerSecret:  "EdqZpFtdmDBnpdEtGcIOzNmUetj29FgVZ0jZQNxzk",
+		ConsumerKey:     *consumerKey,
+		ConsumerSecret:  *consumerSecret,
 		RequestTokenUrl: "https://api.twitter.com/oauth/request_token",
 		AuthorizeUrl:    "https://api.twitter.com/oauth/authorize",
 		AccessTokenUrl:  "https://api.twitter.com/oauth/access_token",
