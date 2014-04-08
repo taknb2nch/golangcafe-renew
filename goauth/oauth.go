@@ -227,8 +227,6 @@ type Generator struct {
 	oauthToken       string
 	oauthTokenSecret string
 	params           map[string]string
-
-	calcTimeAndNonce func() (string, string)
 }
 
 // NewGenerator returns a new Generator.
@@ -247,12 +245,6 @@ func NewGenerator(consumerKey, consumerSecret, oauthToken, oauthTokenSecret stri
 
 func (h *Generator) clear() {
 	h.params = make(map[string]string)
-
-	h.calcTimeAndNonce = func() (string, string) {
-		now := time.Now()
-
-		return strconv.FormatInt(now.Unix(), 10), strconv.FormatInt(rand.New(rand.NewSource(now.UnixNano())).Int63(), 10)
-	}
 }
 
 // Set sets the key to value. It replaces any existing values.
@@ -302,18 +294,27 @@ func (h *Generator) GetAuthorization() string {
 }
 
 func (h *Generator) setDefaultParams() {
-	timestamp, nonce := h.calcTimeAndNonce()
-
 	h.SetParam(consumerKeyParam, h.consumerKey)
 
 	if h.oauthToken != "" {
 		h.SetParam(tokenParam, h.oauthToken)
 	}
 
-	h.SetParam(nonceParam, nonce)
-	h.SetParam(signatureMethodParam, "HMAC-SHA1")
-	h.SetParam(timestampParam, timestamp)
-	h.SetParam(versionParam, "1.0")
+	now := time.Now()
+
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	nonce := strconv.FormatInt(rand.New(rand.NewSource(now.UnixNano())).Int63(), 10)
+
+	h.setIfNotExist(nonceParam, nonce)
+	h.setIfNotExist(timestampParam, timestamp)
+	h.setIfNotExist(signatureMethodParam, "HMAC-SHA1")
+	h.setIfNotExist(versionParam, "1.0")
+}
+
+func (h *Generator) setIfNotExist(key, value string) {
+	if _, ok := h.params[key]; !ok {
+		h.SetParam(key, value)
+	}
 }
 
 func (h *Generator) calcSignature() string {
