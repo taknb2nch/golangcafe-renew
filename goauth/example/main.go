@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/taknb2nch/goauth"
+	"github.com/taknb2nch/golangcafe-renew/goauth"
 )
 
 var (

@@ -253,15 +253,27 @@ func (h *Generator) SetParam(k, v string) {
 }
 
 // SetUrl sets the method, requestUrl and values.
-func (h *Generator) SetUrl(method, requestUrl string, values url.Values) {
+func (h *Generator) SetUrl(method, requestUrl string, values url.Values) error {
 	h.method = method
-	h.requestUrl = requestUrl
+
+	u, err := url.Parse(requestUrl)
+	if err != nil {
+		return err
+	}
+
+	h.requestUrl = u.Scheme + "://" + u.Host + u.Path
+	qs := u.Query()
+	for k, _ := range qs {
+		h.SetParam(k, qs.Get(k))
+	}
 
 	if values != nil {
 		for k, _ := range values {
 			h.SetParam(k, values.Get(k))
 		}
 	}
+
+	return nil
 }
 
 // GetAuthorization returns the value for Authorization header.
@@ -282,24 +294,27 @@ func (h *Generator) GetAuthorization() string {
 }
 
 func (h *Generator) setDefaultParams() {
-	timestamp, nonce := h.getTimestampAndNonce()
-
 	h.SetParam(consumerKeyParam, h.consumerKey)
 
 	if h.oauthToken != "" {
 		h.SetParam(tokenParam, h.oauthToken)
 	}
 
-	h.SetParam(nonceParam, strconv.FormatInt(nonce, 10))
-	h.SetParam(signatureMethodParam, "HMAC-SHA1")
-	h.SetParam(timestampParam, strconv.FormatInt(timestamp, 10))
-	h.SetParam(versionParam, "1.0")
-}
-
-func (g *Generator) getTimestampAndNonce() (int64, int64) {
 	now := time.Now()
 
-	return now.Unix(), rand.New(rand.NewSource(now.UnixNano())).Int63()
+	timestamp := strconv.FormatInt(now.Unix(), 10)
+	nonce := strconv.FormatInt(rand.New(rand.NewSource(now.UnixNano())).Int63(), 10)
+
+	h.setIfNotExist(nonceParam, nonce)
+	h.setIfNotExist(timestampParam, timestamp)
+	h.setIfNotExist(signatureMethodParam, "HMAC-SHA1")
+	h.setIfNotExist(versionParam, "1.0")
+}
+
+func (h *Generator) setIfNotExist(key, value string) {
+	if _, ok := h.params[key]; !ok {
+		h.SetParam(key, value)
+	}
 }
 
 func (h *Generator) calcSignature() string {
@@ -311,6 +326,8 @@ func (h *Generator) calcSignature() string {
 	for _, k := range mk {
 		ps += k + "=" + h.params[k] + "&"
 	}
+
+	//fmt.Println(ps)
 
 	// Signature base string
 	sbs := PercentEncode(h.method) + "&" + PercentEncode(h.requestUrl) + "&" + PercentEncode(ps[:len(ps)-1])
@@ -358,15 +375,6 @@ func PercentEncode(str string) string {
 	return s
 }
 
-type OAuthError struct {
-	prefix string
-	msg    string
-}
-
-func (oe OAuthError) Error() string {
-	return "OAuthError: " + oe.prefix + ": " + oe.msg
-}
-
 type Cache interface {
 	Token() (*Token, error)
 	PutToken(*Token) error
@@ -375,29 +383,44 @@ type Cache interface {
 type CacheFile string
 
 func (f CacheFile) Token() (*Token, error) {
-	file, err := os.Open(string(f))
+	var file *os.File
+	var err error
+
+	file, err = os.Open(string(f))
+
 	if err != nil {
-		return nil, OAuthError{"CacheFile.Token", err.Error()}
+		return nil, err
 	}
+
 	defer file.Close()
+
 	tok := &Token{}
-	if err := json.NewDecoder(file).Decode(tok); err != nil {
-		return nil, OAuthError{"CacheFile.Token", err.Error()}
+
+	if err = json.NewDecoder(file).Decode(tok); err != nil {
+		return nil, err
 	}
+
 	return tok, nil
 }
 
 func (f CacheFile) PutToken(tok *Token) error {
-	file, err := os.OpenFile(string(f), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	var file *os.File
+	var err error
+
+	file, err = os.OpenFile(string(f), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+
 	if err != nil {
-		return OAuthError{"CacheFile.PutToken", err.Error()}
+		return err
 	}
-	if err := json.NewEncoder(file).Encode(tok); err != nil {
+
+	if err = json.NewEncoder(file).Encode(tok); err != nil {
 		file.Close()
-		return OAuthError{"CacheFile.PutToken", err.Error()}
+		return err
 	}
-	if err := file.Close(); err != nil {
-		return OAuthError{"CacheFile.PutToken", err.Error()}
+
+	if err = file.Close(); err != nil {
+		return err
 	}
+
 	return nil
 }
