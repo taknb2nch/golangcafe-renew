@@ -237,14 +237,10 @@ func NewGenerator(consumerKey, consumerSecret, oauthToken, oauthTokenSecret stri
 		consumerSecret:   consumerSecret,
 		oauthToken:       oauthToken,
 		oauthTokenSecret: oauthTokenSecret,
+		params:           make(map[string]string),
 	}
-	h.clear()
 
 	return h
-}
-
-func (h *Generator) clear() {
-	h.params = make(map[string]string)
 }
 
 // Set sets the key to value. It replaces any existing values.
