@@ -1,5 +1,5 @@
 //
-// $ go run main.go key=consumerKey secret=consumerSecret
+// $ go run main.go -key=consumerKey -secret=consumerSecret
 //
 package main
 
